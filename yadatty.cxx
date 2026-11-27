@@ -1,5 +1,5 @@
-// yadatty — a terminal on libghostty-vt, drawn with an OpenGL ES 3.1
-// compute shader. One translation unit. Windowing is X11 + EGL.
+// yadatty — a terminal on libghostty-vt, drawn with a desktop OpenGL 4.3
+// compute shader. One translation unit. Windowing is X11 + GLX.
 
 #include "yadatty.hxx"
 
@@ -11,8 +11,8 @@
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
 
-#include <EGL/egl.h>
-#include <GLES3/gl31.h>
+#define GL_GLEXT_PROTOTYPES 1
+#include <GL/glx.h>
 
 #include <poll.h>
 #include <pty.h>
@@ -44,11 +44,11 @@ namespace yadatty {
 namespace {
 
 constexpr char kCompute[] = R"gl(
-#version 310 es
+#version 430 core
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(std430, binding = 0) readonly buffer Cells { uvec4 cells[]; };
-layout(binding = 0) uniform highp sampler2D uAtlas;
-layout(rgba8, binding = 0) writeonly uniform highp image2D uFrame;
+layout(binding = 0) uniform sampler2D uAtlas;
+layout(rgba8, binding = 0) writeonly uniform image2D uFrame;
 uniform int uCols;
 uniform int uRows;
 uniform int uCursorOn;
@@ -125,14 +125,13 @@ void main() {
 )gl";
 
 constexpr char kPresentVs[] = R"gl(
-#version 300 es
+#version 430 core
 const vec2 kCorner[3] = vec2[3](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
 void main() { gl_Position = vec4(kCorner[gl_VertexID], 0.0, 1.0); }
 )gl";
 
 constexpr char kPresentFs[] = R"gl(
-#version 300 es
-precision highp float;
+#version 430 core
 uniform sampler2D uFrame;
 uniform int uPadX;
 uniform int uBottom;
@@ -611,9 +610,7 @@ struct App {
   int pad_x = 0;
   int pad_y = 0;
 
-  EGLDisplay egl = EGL_NO_DISPLAY;
-  EGLContext ctx = EGL_NO_CONTEXT;
-  EGLSurface surface = EGL_NO_SURFACE;
+  GLXContext ctx = nullptr;
   GLuint compute = 0;
   GLuint present = 0;
   GLuint vao = 0;
@@ -679,22 +676,20 @@ struct App {
     ghostty_render_state_row_iterator_free(row_it); row_it = nullptr;
     ghostty_render_state_free(render); render = nullptr;
     ghostty_terminal_free(term); term = nullptr;
-    if (dpy && ctx != EGL_NO_CONTEXT) eglMakeCurrent(egl, surface, surface, ctx);
-    if (compute) glDeleteProgram(compute);
-    if (present) glDeleteProgram(present);
-    if (vao) glDeleteVertexArrays(1, &vao);
-    if (atlas_tex) glDeleteTextures(1, &atlas_tex);
-    if (frame_tex) glDeleteTextures(1, &frame_tex);
-    if (ssbo) glDeleteBuffers(1, &ssbo);
+    if (dpy && ctx && win && glXGetCurrentContext() != ctx) glXMakeCurrent(dpy, win, ctx);
+    if (dpy && ctx && glXGetCurrentContext() == ctx) {
+      if (compute) glDeleteProgram(compute);
+      if (present) glDeleteProgram(present);
+      if (vao) glDeleteVertexArrays(1, &vao);
+      if (atlas_tex) glDeleteTextures(1, &atlas_tex);
+      if (frame_tex) glDeleteTextures(1, &frame_tex);
+      if (ssbo) glDeleteBuffers(1, &ssbo);
+    }
     compute = present = vao = atlas_tex = frame_tex = ssbo = 0;
-    if (egl != EGL_NO_DISPLAY) {
-      eglMakeCurrent(egl, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-      if (surface != EGL_NO_SURFACE) eglDestroySurface(egl, surface);
-      if (ctx != EGL_NO_CONTEXT) eglDestroyContext(egl, ctx);
-      eglTerminate(egl);
-      surface = EGL_NO_SURFACE;
-      ctx = EGL_NO_CONTEXT;
-      egl = EGL_NO_DISPLAY;
+    if (dpy && ctx) {
+      glXMakeCurrent(dpy, None, nullptr);
+      glXDestroyContext(dpy, ctx);
+      ctx = nullptr;
     }
     if (dpy) {
       if (xic) XDestroyIC(xic);
@@ -732,7 +727,7 @@ struct App {
       if (dirty_gl || phase != cursor_phase) {
         cursor_phase = phase;
         draw();
-        eglSwapBuffers(egl, surface);
+        glXSwapBuffers(dpy, win);
         dirty_gl = false;
       }
       pollfd fds[2] = {
@@ -752,45 +747,29 @@ struct App {
       std::fprintf(stderr, "yadatty: cannot open DISPLAY\n");
       return false;
     }
-    egl = eglGetDisplay(reinterpret_cast<EGLNativeDisplayType>(dpy));
-    if (egl == EGL_NO_DISPLAY || !eglInitialize(egl, nullptr, nullptr)) {
-      std::fprintf(stderr, "yadatty: eglInitialize failed\n");
-      return false;
-    }
-    if (!eglBindAPI(EGL_OPENGL_ES_API)) {
-      std::fprintf(stderr, "yadatty: EGL_OPENGL_ES_API is not available\n");
-      return false;
-    }
-    const EGLint config_attr[] = {
-        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
-        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
-        EGL_NONE};
-    EGLConfig config = nullptr;
-    EGLint count = 0;
-    if (!eglChooseConfig(egl, config_attr, &config, 1, &count) || count < 1) {
-      std::fprintf(stderr, "yadatty: no OpenGL ES 3 EGL config\n");
-      return false;
-    }
-    const EGLint context_attr[] = {
-        EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 1, EGL_NONE};
-    ctx = eglCreateContext(egl, config, EGL_NO_CONTEXT, context_attr);
-    if (ctx == EGL_NO_CONTEXT) {
-      std::fprintf(stderr, "yadatty: eglCreateContext failed (0x%x). Need OpenGL ES 3.1.\n",
-                   eglGetError());
-      return false;
-    }
-    EGLint visual_id = 0;
-    eglGetConfigAttrib(egl, config, EGL_NATIVE_VISUAL_ID, &visual_id);
-    XVisualInfo want{};
-    want.visualid = VisualID(visual_id);
-    int nvis = 0;
-    XVisualInfo* vis = XGetVisualInfo(dpy, VisualIDMask, &want, &nvis);
-    if (!vis) {
-      std::fprintf(stderr, "yadatty: EGL visual is not an X visual\n");
-      return false;
-    }
     const int screen = DefaultScreen(dpy);
+    const int fb_attr[] = {
+        GLX_X_RENDERABLE, True,
+        GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
+        GLX_RENDER_TYPE, GLX_RGBA_BIT,
+        GLX_X_VISUAL_TYPE, GLX_TRUE_COLOR,
+        GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8, GLX_ALPHA_SIZE, 8,
+        GLX_DOUBLEBUFFER, True,
+        None};
+    int count = 0;
+    GLXFBConfig* configs = glXChooseFBConfig(dpy, screen, fb_attr, &count);
+    if (!configs || count < 1) {
+      std::fprintf(stderr, "yadatty: no GLX framebuffer config\n");
+      if (configs) XFree(configs);
+      return false;
+    }
+    const GLXFBConfig fb = configs[0];
+    XVisualInfo* vis = glXGetVisualFromFBConfig(dpy, fb);
+    if (!vis) {
+      std::fprintf(stderr, "yadatty: GLX config has no X visual\n");
+      XFree(configs);
+      return false;
+    }
     cmap = XCreateColormap(dpy, RootWindow(dpy, screen), vis->visual, AllocNone);
     XSetWindowAttributes attr{};
     attr.colormap = cmap;
@@ -799,6 +778,11 @@ struct App {
     win = XCreateWindow(dpy, RootWindow(dpy, screen), 0, 0, uint32_t(width), uint32_t(height), 0,
                         vis->depth, InputOutput, vis->visual, CWColormap | CWEventMask, &attr);
     XFree(vis);
+    if (!win) {
+      std::fprintf(stderr, "yadatty: XCreateWindow failed\n");
+      XFree(configs);
+      return false;
+    }
     wm_delete = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(dpy, win, &wm_delete, 1);
     utf8_atom = XInternAtom(dpy, "UTF8_STRING", False);
@@ -817,12 +801,33 @@ struct App {
     size.width_inc = kCellW;
     size.height_inc = kCellH;
     XSetWMNormalHints(dpy, win, &size);
-    surface = eglCreateWindowSurface(egl, config, win, nullptr);
-    if (surface == EGL_NO_SURFACE || !eglMakeCurrent(egl, surface, surface, ctx)) {
-      std::fprintf(stderr, "yadatty: eglMakeCurrent failed (0x%x)\n", eglGetError());
+
+    const auto create = reinterpret_cast<PFNGLXCREATECONTEXTATTRIBSARBPROC>(
+        glXGetProcAddressARB(reinterpret_cast<const GLubyte*>("glXCreateContextAttribsARB")));
+    if (!create) {
+      std::fprintf(stderr, "yadatty: GLX_ARB_create_context is missing\n");
+      XFree(configs);
       return false;
     }
-    eglSwapInterval(egl, 1);
+    const int ctx_attr[] = {
+        GLX_CONTEXT_MAJOR_VERSION_ARB, 4,
+        GLX_CONTEXT_MINOR_VERSION_ARB, 3,
+        GLX_CONTEXT_PROFILE_MASK_ARB, GLX_CONTEXT_CORE_PROFILE_BIT_ARB,
+        None};
+    ctx = create(dpy, fb, nullptr, True, ctx_attr);
+    XFree(configs);
+    if (!ctx) {
+      std::fprintf(stderr, "yadatty: need an OpenGL 4.3 core context\n");
+      return false;
+    }
+    if (!glXMakeCurrent(dpy, win, ctx)) {
+      std::fprintf(stderr, "yadatty: glXMakeCurrent failed\n");
+      return false;
+    }
+    const auto swap = reinterpret_cast<PFNGLXSWAPINTERVALEXTPROC>(
+        glXGetProcAddressARB(reinterpret_cast<const GLubyte*>("glXSwapIntervalEXT")));
+    if (swap) swap(dpy, win, 1);
+
     XSetLocaleModifiers("");
     xim = XOpenIM(dpy, nullptr, nullptr, nullptr);
     if (xim) {
@@ -836,9 +841,9 @@ struct App {
     const auto* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
     int major = 0;
     int minor = 0;
-    if (!version || std::sscanf(version, "OpenGL ES %d.%d", &major, &minor) != 2 || major < 3 ||
-        (major == 3 && minor < 1)) {
-      std::fprintf(stderr, "yadatty: need OpenGL ES 3.1, got %s\n", version ? version : "(null)");
+    if (!version || std::sscanf(version, "%d.%d", &major, &minor) != 2 || major < 4 ||
+        (major == 4 && minor < 3)) {
+      std::fprintf(stderr, "yadatty: need OpenGL 4.3, got %s\n", version ? version : "(null)");
       return false;
     }
     const GLuint cs = compile_shader(GL_COMPUTE_SHADER, kCompute);

@@ -3,7 +3,7 @@
 // GPU cell contract for yadatty.
 //
 // The host packs one of these per terminal cell into a shader-storage
-// buffer. The OpenGL ES 3.1 compute shader reads the same 16-byte layout
+// buffer. The desktop OpenGL 4.3 compute shader reads the same 16-byte layout
 // (std430) and paints the glyph. Keep the attribute bits in lockstep with
 // the shader in yadatty.cxx.
 

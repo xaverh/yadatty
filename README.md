@@ -1,13 +1,14 @@
 # yadatty
 
 A minimal terminal. [libghostty-vt](https://ghostty.org) owns the VT state.
-An OpenGL ES 3.1 compute shader paints the cells, the same idea as
+A desktop OpenGL 4.3 compute shader paints the cells, the same idea as
 [zutty](https://github.com/tomscii/zutty): one cell per invocation, glyphs
-from an atlas, no desktop GL. The program is a single C++23 translation
-unit (`yadatty.cxx` + `yadatty.hxx`), in the spirit of
+from an atlas. The program is a single C++23 translation unit
+(`yadatty.cxx` + `yadatty.hxx`), in the spirit of
 [ghostling](https://github.com/ghostty-org/ghostling).
 
-Windowing is X11 + EGL. There is no Raylib and no desktop OpenGL.
+Windowing is X11 + GLX. The context is OpenGL 4.3 core. There is no
+Raylib and no OpenGL ES. The ES 3.1 / EGL build is on `master`.
 
 ## What you get
 
@@ -32,7 +33,7 @@ libghostty but not drawn.
 Requires a C++23 compiler, POSIX make, pkg-config, and:
 
 - `libghostty-vt` ≥ 1.0.3 (the C API this file was written against)
-- OpenGL ES 3.1 (`glesv2`), EGL, and X11
+- desktop OpenGL 4.3 (`gl`) and X11
 
 libghostty-vt is not vendored. Build it from Ghostty with Zig 0.17 or
 newer, then point pkg-config at the prefix:
@@ -44,8 +45,9 @@ zig build -Demit-lib-vt --prefix "$HOME/.local" -Doptimize=ReleaseFast
 export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 ```
 
-On Debian or Ubuntu the GUI pieces are `pkg-config`, `libgles-dev`,
-`libegl-dev`, and `libx11-dev`. `forkpty` comes from libutil.
+On Debian or Ubuntu the GUI pieces are `pkg-config`, `libgl-dev`, and
+`libx11-dev`. `forkpty` comes from libutil. The driver must expose an
+OpenGL 4.3 core context through GLX.
 
 ```sh
 make

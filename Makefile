@@ -12,8 +12,8 @@ LDFLAGS =
 
 GHOSTTY_CFLAGS != $(PKG_CONFIG) --cflags libghostty-vt
 GHOSTTY_LIBS != $(PKG_CONFIG) --libs libghostty-vt
-GUI_CFLAGS != $(PKG_CONFIG) --cflags glesv2 egl x11
-GUI_LIBS != $(PKG_CONFIG) --libs glesv2 egl x11
+GUI_CFLAGS != $(PKG_CONFIG) --cflags gl x11
+GUI_LIBS != $(PKG_CONFIG) --libs gl x11
 
 LDLIBS = $(GHOSTTY_LIBS) $(GUI_LIBS) -lutil
 

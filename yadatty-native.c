@@ -142,6 +142,14 @@ static int width = 80 * CELL_W;
 static int height = 24 * CELL_H;
 static int cols = 80;
 static int rows = 24;
+static int min_cols = 2;
+static int min_rows = 1;
+static uint64_t blink_period_ns = 530000000ull;
+static char cfg_name[128] = "yadatty";
+static char cfg_class[128] = "Yadatty";
+static char cfg_term[64] = "xterm-256color";
+static char cfg_colorterm[32] = "truecolor";
+static char cfg_shell[256] = "/bin/sh";
 static int pad_x, pad_y;
 static EGLDisplay egl_dpy = EGL_NO_DISPLAY;
 static EGLContext egl_ctx = EGL_NO_CONTEXT;
@@ -564,6 +572,35 @@ static void encode_mouse(void) {
     pty_write(buf, n);
 }
 
+static void copy_cfg(char *dst, size_t cap, const char *src) {
+  size_t n;
+  if (!src) src = "";
+  n = strlen(src);
+  if (n >= cap) n = cap - 1;
+  memcpy(dst, src, n);
+  dst[n] = 0;
+}
+
+static void y_configure(int c, int r, int minc, int minr, int blink_ms, const char *name, const char *cls,
+                        const char *term, const char *cterm, const char *shell) {
+  if (c < 1) c = 1;
+  if (r < 1) r = 1;
+  cols = c;
+  rows = r;
+  width = cols * CELL_W;
+  height = rows * CELL_H;
+  if (minc < 1) minc = 1;
+  if (minr < 1) minr = 1;
+  min_cols = minc;
+  min_rows = minr;
+  blink_period_ns = blink_ms < 1 ? 0 : (uint64_t)blink_ms * 1000000ull;
+  if (name && name[0]) copy_cfg(cfg_name, sizeof cfg_name, name);
+  if (cls && cls[0]) copy_cfg(cfg_class, sizeof cfg_class, cls);
+  if (term && term[0]) copy_cfg(cfg_term, sizeof cfg_term, term);
+  if (cterm && cterm[0]) copy_cfg(cfg_colorterm, sizeof cfg_colorterm, cterm);
+  if (shell && shell[0]) copy_cfg(cfg_shell, sizeof cfg_shell, shell);
+}
+
 static int y_init(void) {
   XSetErrorHandler(x_error);
   setlocale(LC_CTYPE, "");
@@ -639,14 +676,14 @@ static int y_init(void) {
     clipboard_atom = XInternAtom(dpy, "CLIPBOARD", False);
     targets_atom = XInternAtom(dpy, "TARGETS", False);
     paste_atom = XInternAtom(dpy, "YADATTY_PASTE", False);
-    XStoreName(dpy, win, "yadatty");
-    hint.res_name = (char *)"yadatty";
-    hint.res_class = (char *)"Yadatty";
+    XStoreName(dpy, win, cfg_name);
+    hint.res_name = cfg_name;
+    hint.res_class = cfg_class;
     XSetClassHint(dpy, win, &hint);
     memset(&size, 0, sizeof size);
     size.flags = PMinSize | PResizeInc | PBaseSize;
-    size.min_width = CELL_W * 2;
-    size.min_height = CELL_H;
+    size.min_width = CELL_W * min_cols;
+    size.min_height = CELL_H * min_rows;
     size.width_inc = CELL_W;
     size.height_inc = CELL_H;
     XSetWMNormalHints(dpy, win, &size);
@@ -733,8 +770,8 @@ static int y_spawn(void) {
   if (child == 0) {
     int argc = C_main_argc;
     char **argv = C_main_argv;
-    setenv("TERM", "xterm-256color", 1);
-    setenv("COLORTERM", "truecolor", 1);
+    setenv("TERM", cfg_term, 1);
+    setenv("COLORTERM", cfg_colorterm, 1);
     if (argc > 1) {
       char **args = argv + 1;
       if (strcmp(argv[1], "-e") == 0) {
@@ -748,7 +785,7 @@ static int y_spawn(void) {
       if (!shell || shell[0] == '\0') {
         struct passwd *pw = getpwuid(getuid());
         if (pw && pw->pw_shell && pw->pw_shell[0]) shell = pw->pw_shell;
-        else shell = "/bin/sh";
+        else shell = cfg_shell;
       }
       base = strrchr(shell, '/');
       base = base ? base + 1 : shell;
@@ -1235,7 +1272,10 @@ static void y_title(void) {
   if (!dpy || !win) return;
   title.ptr = NULL;
   title.len = 0;
-  memcpy(next, "yadatty", 8);
+  n = strlen(cfg_name);
+  if (n >= sizeof next) n = sizeof next - 1;
+  memcpy(next, cfg_name, n);
+  next[n] = 0;
   if (term && ghostty_terminal_get(term, GHOSTTY_TERMINAL_DATA_TITLE, &title) == GHOSTTY_SUCCESS && title.ptr &&
       title.len > 0) {
     n = title.len;
@@ -1252,15 +1292,15 @@ static void y_title(void) {
 static double y_now_ns(void) { return (double)mono_ns(); }
 
 static int y_blink_phase(int enabled) {
-  if (!enabled) return 1;
-  return ((mono_ns() / 530000000ull) % 2ull) == 0ull;
+  if (!enabled || blink_period_ns == 0) return 1;
+  return ((mono_ns() / blink_period_ns) % 2ull) == 0ull;
 }
 
 static int y_blink_timeout(int enabled) {
-  uint64_t period = 530000000ull;
+  uint64_t period = blink_period_ns;
   uint64_t into, half, left;
   int ms;
-  if (!enabled) return -1;
+  if (!enabled || period == 0) return -1;
   into = mono_ns() % period;
   half = period / 2;
   left = into < half ? half - into : period - into;

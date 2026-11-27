@@ -1,6 +1,7 @@
 ;;;; yadatty — a libghostty-vt terminal in Chicken Scheme.
 ;;;; OpenGL ES 3.1 compute shader, X11 + EGL. No eggs.
-;;;; The C side is yadatty-native.c, included into this translation unit.
+;;;; yadatty-native.c is included into this translation unit.
+;;;; config.scm is the part you edit.
 
 (import scheme
         (chicken base)
@@ -82,15 +83,15 @@
     "y_gl_compute(cols, rows, on, r, g, b, explicit);"))
 (define y-gl-present
   (foreign-lambda* void ((int pad) (int bottom) (int gw) (int gh)) "y_gl_present(pad, bottom, gw, gh);"))
+(define y-configure
+  (foreign-lambda* void ((int c) (int r) (int minc) (int minr) (int blink)
+                         (c-string name) (c-string cls) (c-string term)
+                         (c-string cterm) (c-string shell))
+    "y_configure(c, r, minc, minr, blink, name, cls, term, cterm, shell);"))
 
 (define cell-w 8)
 (define cell-h 16)
 (define atlas-cols 16)
-
-(define cols 80)
-(define rows 24)
-(define width (* 80 cell-w))
-(define height (* 24 cell-h))
 (define pad-x 0)
 (define pad-y 0)
 (define cells #f)
@@ -146,13 +147,28 @@
 (define cursor-underline 2)
 (define cursor-hollow 3)
 
-(define key-page-up 74)
-(define key-page-down 73)
+(define key-space 63)
+(define key-enter 58)
+(define key-tab 64)
+(define key-escape 120)
+(define key-backspace 53)
+(define key-delete 68)
+(define key-insert 72)
 (define key-home 71)
 (define key-end 69)
-(define key-insert 72)
-(define key-c 22)
-(define key-v 41)
+(define key-page-up 74)
+(define key-page-down 73)
+(define key-up 78)
+(define key-down 75)
+(define key-left 76)
+(define key-right 77)
+(define key-f1 121)
+(define key-a 20)
+(define (key-letter ch)
+  (+ key-a (- (char->integer (char-downcase ch)) (char->integer #\a))))
+(define (key-digit ch)
+  (+ 6 (- (char->integer ch) (char->integer #\0))))
+(define (key-fn n) (+ key-f1 (- n 1)))
 (define mod-shift 1)
 (define mod-ctrl 2)
 (define mod-alt 4)
@@ -160,6 +176,11 @@
 (define action-release 0)
 (define action-press 1)
 (define action-repeat 2)
+
+(include "config.scm")
+
+(define width (* cols cell-w))
+(define height (* rows cell-h))
 
 (define ascii-font #u8(
   0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
@@ -506,7 +527,7 @@
 
 (define (begin-select col row mods)
   (let ((t (y-now-ns)))
-    (if (and (< (- t last-click-ns) 400000000.0)
+    (if (and (< (- t last-click-ns) (* click-timeout-ms 1000000.0))
              (= col last-click-col)
              (= row last-click-row))
         (set! click-count (if (>= click-count 3) 1 (+ click-count 1)))
@@ -516,7 +537,7 @@
     (set! last-click-row row)
     (set! anchor-col col)
     (set! anchor-row row)
-    (set! select-rect? (has? mods mod-alt))
+    (set! select-rect? (has? mods rect-modifier))
     (set! selecting? (= click-count 1))
     (set! select-armed? #t)
     (cond ((= click-count 2) (y-select-word col row))
@@ -533,6 +554,51 @@
         ((= b 9) (cons 9 16))
         (else (cons 0 0))))
 
+(define mod-mask (bitwise-ior mod-shift (bitwise-ior mod-ctrl (bitwise-ior mod-alt mod-super))))
+
+(define (mods-match? want got)
+  (or (eq? want 'any) (= (bitwise-and got mod-mask) want)))
+
+(define (lookup-binding xs button-or-key mods)
+  (let loop ((rest xs))
+    (if (null? rest)
+        #f
+        (let ((b (car rest)))
+          (if (and (mods-match? (car b) mods) (= (cadr b) button-or-key))
+              (caddr b)
+              (loop (cdr rest)))))))
+
+(define (scroll-action? action)
+  (or (eq? action 'scroll-up) (eq? action 'scroll-down)))
+
+(define (any-scroll button)
+  (let loop ((rest mouse-shortcuts))
+    (if (null? rest)
+        #f
+        (let ((b (car rest)))
+          (if (and (= (cadr b) button) (scroll-action? (caddr b)))
+              (caddr b)
+              (loop (cdr rest)))))))
+
+(define (page-rows)
+  (let ((n (- rows 1))) (if (< n 1) 1 n)))
+
+(define (run-key-shortcut action)
+  (case action
+    ((copy-clipboard) (copy-selection! #t) #t)
+    ((paste-clipboard) (request-paste! #t) #t)
+    ((paste-primary) (request-paste! #f) #t)
+    ((scroll-page-up) (y-scroll-delta (- (page-rows))) (set! dirty? #t) #t)
+    ((scroll-page-down) (y-scroll-delta (page-rows)) (set! dirty? #t) #t)
+    ((scroll-top) (y-scroll-edge 1) (set! dirty? #t) #t)
+    ((scroll-bottom) (y-scroll-edge 0) (set! dirty? #t) #t)
+    (else #f)))
+
+(define (do-wheel-scroll action)
+  (unless (zero? wheel-scroll)
+    (y-scroll-delta (if (eq? action 'scroll-up) (- wheel-scroll) wheel-scroll))
+    (set! dirty? #t)))
+
 (define (on-button)
   (let ((press? (= (s32vector-ref ev 1) 1))
         (button (s32vector-ref ev 2))
@@ -541,10 +607,11 @@
         (mods (s32vector-ref ev 5)))
     (if (or (= button 4) (= button 5))
         (when press?
-          (let ((up? (= button 4)))
-            (if (or (has? mods mod-shift) (zero? (y-mouse-tracking)))
-                (begin (y-scroll-delta (if up? -3 3)) (set! dirty? #t))
-                (y-mouse-wheel (if up? 4 5) mods x y button-mask))))
+          (let ((hit (lookup-binding mouse-shortcuts button mods)))
+            (cond ((scroll-action? hit) (do-wheel-scroll hit))
+                  ((and (zero? (y-mouse-tracking)) (scroll-action? (any-scroll button)))
+                   (do-wheel-scroll (any-scroll button)))
+                  (else (y-mouse-wheel (if (= button 4) 4 5) mods x y button-mask)))))
         (let* ((mapped (button-map button))
                (gbutton (car mapped))
                (bit (cdr mapped))
@@ -554,39 +621,18 @@
               (set! button-mask (bitwise-and button-mask (bitwise-not bit))))
           (cond
            ((and (= gbutton 1) press? cell
-                 (or (has? mods mod-shift) (zero? (y-mouse-tracking))))
+                 (or (has? mods select-modifier) (zero? (y-mouse-tracking))))
             (begin-select (car cell) (cdr cell) mods))
            ((and (= gbutton 1) (not press?) select-armed?)
             (set! selecting? #f)
             (set! select-armed? #f)
             (y-ungrab)
             (copy-selection! #f))
-           ((and (= gbutton 3) press? (zero? (y-mouse-tracking)))
+           ((and press? (eq? (lookup-binding mouse-shortcuts button mods) 'paste-primary)
+                 (zero? (y-mouse-tracking)))
             (request-paste! #f))
            ((zero? gbutton) #f)
            (else (y-mouse-button (if press? 1 0) gbutton mods x y button-mask)))))))
-
-(define (on-motion)
-  (let ((x (s32vector-ref ev 1))
-        (y (s32vector-ref ev 2))
-        (mods (s32vector-ref ev 3)))
-    (if selecting?
-        (let ((cell (cell-at x y)))
-          (when cell
-            (y-select-cells anchor-col anchor-row (car cell) (cdr cell) (if select-rect? 1 0))
-            (set! dirty? #t)))
-        (y-mouse-motion mods x y button-mask))))
-
-(define (shortcut? key mods)
-  (let ((ctrl-shift (and (has? mods mod-ctrl) (has? mods mod-shift)
-                         (not (has? mods (bitwise-ior mod-alt mod-super))))))
-    (cond ((and ctrl-shift (= key key-c)) (copy-selection! #t) #t)
-          ((and ctrl-shift (= key key-v)) (request-paste! #t) #t)
-          ((and (has? mods mod-shift)
-                (not (has? mods (bitwise-ior mod-ctrl (bitwise-ior mod-alt mod-super))))
-                (= key key-insert))
-           (request-paste! #f) #t)
-          (else #f))))
 
 (define (encode-key release repeat key mods unshifted utf-n)
   (let ((action (cond ((not (zero? release)) action-release)
@@ -601,27 +647,21 @@
       (y-pty-write key-bytes n))))
 
 (define (on-key)
-  (let ((release (s32vector-ref ev 1))
-        (repeat (s32vector-ref ev 2))
-        (key (s32vector-ref ev 3))
-        (mods (s32vector-ref ev 4))
-        (unshifted (s32vector-ref ev 5))
-        (is-mod (s32vector-ref ev 7))
-        (utf-n (s32vector-ref ev 8)))
-    (unless (and (zero? release) (shortcut? key mods))
-      (let ((page? (or (= key key-page-up) (= key key-page-down) (= key key-home) (= key key-end)))
-            (plain-shift (and (has? mods mod-shift)
-                              (not (has? mods (bitwise-ior mod-ctrl (bitwise-ior mod-alt mod-super)))))))
-        (when (and (zero? release) (zero? is-mod) (not (and plain-shift page?)))
-          (y-clear-selection)
-          (set! dirty? #t))
-        (if (and (zero? release) plain-shift)
-            (cond ((= key key-page-up) (y-scroll-delta (- 1 rows)) (set! dirty? #t))
-                  ((= key key-page-down) (y-scroll-delta (- rows 1)) (set! dirty? #t))
-                  ((= key key-home) (y-scroll-edge 1) (set! dirty? #t))
-                  ((= key key-end) (y-scroll-edge 0) (set! dirty? #t))
-                  (else (encode-key release repeat key mods unshifted utf-n)))
-            (encode-key release repeat key mods unshifted utf-n))))))
+  (let* ((release (s32vector-ref ev 1))
+         (repeat (s32vector-ref ev 2))
+         (key (s32vector-ref ev 3))
+         (mods (s32vector-ref ev 4))
+         (unshifted (s32vector-ref ev 5))
+         (is-mod (s32vector-ref ev 7))
+         (utf-n (s32vector-ref ev 8))
+         (bound (and (zero? release) (lookup-binding shortcuts key mods))))
+    (if (and bound (run-key-shortcut bound))
+        #f
+        (begin
+          (when (and (zero? release) (zero? is-mod))
+            (y-clear-selection)
+            (set! dirty? #t))
+          (encode-key release repeat key mods unshifted utf-n)))))
 
 (define (on-focus)
   (let ((in? (= (s32vector-ref ev 1) 1))
@@ -671,6 +711,8 @@
 
 (define (yadatty)
   (make-atlas!)
+  (y-configure cols rows min-cols min-rows blink-timeout-ms
+               window-name window-class term-name colorterm fallback-shell)
   (cond ((not (zero? (y-init))) (y-shutdown) (exit 1))
         ((not (zero? (y-spawn))) (y-shutdown) (exit 1))
         (else

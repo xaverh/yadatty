@@ -8,7 +8,8 @@ from an atlas, no desktop GL.
 This branch is the [Chicken Scheme](https://www.call-cc.org/) program.
 `yadatty.scm` owns the atlas, the cell grid, blink, and the input
 policy. `yadatty-native.c` is the libghostty-vt, X11, EGL, and OpenGL
-ES side; the Scheme file includes it into the same translation unit.
+ES side. `config.scm` is what you edit, the same way
+[st](https://st.suckless.org) uses `config.h`: change it, then `make`.
 No eggs. The C++ version is on `master`. Desktop OpenGL is on `opengl`.
 
 Windowing is X11 + EGL. There is no Raylib and no desktop OpenGL.
@@ -60,6 +61,12 @@ make PREFIX="$HOME/.local" install
 
 `CSC`, `CSCFLAGS`, and `DESTDIR` override the makefile from the command
 line. `DESTDIR` stages `install`.
+
+## Config
+
+[config.scm](config.scm) is included by the program. It sets the initial
+size, the fallback shell, `$TERM`, the blink period, the click timeout,
+and the key and mouse bindings. The glyph cell stays 8×16.
 
 ## Keys
 

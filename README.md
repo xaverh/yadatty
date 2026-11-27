@@ -5,12 +5,13 @@ An OpenGL ES 3.1 compute shader paints the cells, the same idea as
 [zutty](https://github.com/tomscii/zutty): one cell per invocation, glyphs
 from an atlas, no desktop GL.
 
-This branch is the [Chicken Scheme](https://www.call-cc.org/) program.
+This is the [Chicken Scheme](https://www.call-cc.org/) program, on `main`.
 `yadatty.scm` owns the atlas, the cell grid, blink, and the input
 policy. `yadatty-native.c` is the libghostty-vt, X11, EGL, and OpenGL
 ES side. `config.scm` is what you edit, the same way
 [st](https://st.suckless.org) uses `config.h`: change it, then `make`.
-No eggs. The C++ version is on `master`. Desktop OpenGL is on `opengl`.
+No eggs. The C++ OpenGL ES version is on `opengl-es`. Desktop OpenGL
+is on `opengl`.
 
 Windowing is X11 + EGL. There is no Raylib and no desktop OpenGL.
 

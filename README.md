@@ -5,11 +5,11 @@ An OpenGL ES 3.1 compute shader paints the cells, the same idea as
 [zutty](https://github.com/tomscii/zutty): one cell per invocation, glyphs
 from an atlas, no desktop GL.
 
-This branch is the [Chicken Scheme](https://www.call-cc.org/) program:
-one file, `yadatty.scm`, no eggs. Scheme owns the atlas, the cell grid,
-blink, and the input policy. A C foreign block talks to libghostty-vt,
-X11, EGL, and OpenGL ES. The C++ version is on `master`. Desktop OpenGL
-is on `opengl`.
+This branch is the [Chicken Scheme](https://www.call-cc.org/) program.
+`yadatty.scm` owns the atlas, the cell grid, blink, and the input
+policy. `yadatty-native.c` is the libghostty-vt, X11, EGL, and OpenGL
+ES side; the Scheme file includes it into the same translation unit.
+No eggs. The C++ version is on `master`. Desktop OpenGL is on `opengl`.
 
 Windowing is X11 + EGL. There is no Raylib and no desktop OpenGL.
 
@@ -35,7 +35,7 @@ libghostty but not drawn.
 
 Requires CHICKEN 5 (`csc`), POSIX make, pkg-config, and:
 
-- `libghostty-vt` ≥ 1.0.3 (the C API this file was written against)
+- `libghostty-vt` ≥ 1.0.3 (the C API `yadatty-native.c` was written against)
 - OpenGL ES 3.1 (`glesv2`), EGL, and X11
 
 libghostty-vt is not vendored. Build it from Ghostty with Zig 0.17 or

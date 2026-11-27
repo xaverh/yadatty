@@ -16,8 +16,8 @@ GUI_LIBS != $(PKG_CONFIG) --libs glesv2 egl x11
 
 all: yadatty
 
-yadatty: yadatty.scm
-	set -- $(CSCFLAGS); \
+yadatty: yadatty.scm yadatty-native.c
+	set -- $(CSCFLAGS) -C -I.; \
 	for f in $(GHOSTTY_CFLAGS) $(GUI_CFLAGS); do set -- "$$@" -C "$$f"; done; \
 	for f in $(GHOSTTY_LIBS) $(GUI_LIBS) -lutil; do set -- "$$@" -L "$$f"; done; \
 	$(CSC) "$$@" -o yadatty yadatty.scm

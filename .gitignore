@@ -39,6 +39,13 @@
 *.app
 /yadatty
 
+# Chicken
+*.import.scm
+yadatty.c
+yadatty.link
+*.build.sh
+
+
 # Build directories
 [Bb]uild/
 [Bb]uild-*/

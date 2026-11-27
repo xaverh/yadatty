@@ -3,9 +3,13 @@
 A minimal terminal. [libghostty-vt](https://ghostty.org) owns the VT state.
 An OpenGL ES 3.1 compute shader paints the cells, the same idea as
 [zutty](https://github.com/tomscii/zutty): one cell per invocation, glyphs
-from an atlas, no desktop GL. The program is a single C++23 translation
-unit (`yadatty.cxx` + `yadatty.hxx`), in the spirit of
-[ghostling](https://github.com/ghostty-org/ghostling).
+from an atlas, no desktop GL.
+
+This branch is the [Chicken Scheme](https://www.call-cc.org/) program:
+one file, `yadatty.scm`, no eggs. Scheme owns the atlas, the cell grid,
+blink, and the input policy. A C foreign block talks to libghostty-vt,
+X11, EGL, and OpenGL ES. The C++ version is on `master`. Desktop OpenGL
+is on `opengl`.
 
 Windowing is X11 + EGL. There is no Raylib and no desktop OpenGL.
 
@@ -29,7 +33,7 @@ libghostty but not drawn.
 
 ## Build
 
-Requires a C++23 compiler, POSIX make, pkg-config, and:
+Requires CHICKEN 5 (`csc`), POSIX make, pkg-config, and:
 
 - `libghostty-vt` ≥ 1.0.3 (the C API this file was written against)
 - OpenGL ES 3.1 (`glesv2`), EGL, and X11
@@ -44,8 +48,8 @@ zig build -Demit-lib-vt --prefix "$HOME/.local" -Doptimize=ReleaseFast
 export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 ```
 
-On Debian or Ubuntu the GUI pieces are `pkg-config`, `libgles-dev`,
-`libegl-dev`, and `libx11-dev`. `forkpty` comes from libutil.
+On Debian or Ubuntu the GUI pieces are `pkg-config`, `chicken-bin`,
+`libgles-dev`, `libegl-dev`, and `libx11-dev`. `forkpty` comes from libutil.
 
 ```sh
 make
@@ -54,8 +58,8 @@ make
 make PREFIX="$HOME/.local" install
 ```
 
-`CC`, `CFLAGS`, `CPPFLAGS`, `LDFLAGS`, and `LDLIBS` override the makefile
-from the command line. `DESTDIR` stages `install`.
+`CSC`, `CSCFLAGS`, and `DESTDIR` override the makefile from the command
+line. `DESTDIR` stages `install`.
 
 ## Keys
 
